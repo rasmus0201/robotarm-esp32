@@ -8,14 +8,12 @@
 #include <AutoConnectCredential.h>
 
 // mDNS
-String hostName = "esp";
-
-// WiFi
-//const char *ssid = "Sde-Guest";
-//const char *password = "";
+String espHostname = "esp";
 
 // MQTT
 const char *mqttHostname = "robotarm.local";
+String mqttIp = "10.142.106.136"; // 0.0.0.0
+const short mqttPort = 1883;
 const char *mqttUsername = "robotarm";
 const char *mqttPassword = "robotarm";
 EspMQTTClient *mqtt = nullptr;
@@ -39,10 +37,9 @@ struct Input {
   bool NEW;
 };
 
-Input MQTT_INPUT_RESET = { "", "", -1, false };
+Input MQTT_INPUT_DEFAULT = { "", "", -1, false };
 Input MQTT_INPUT = { "", "", -1, false };
 
-// WebServer server;
 AutoConnect portal;
 AutoConnectConfig acConfig;
 
@@ -56,44 +53,37 @@ void setup(void)
   Serial.begin(115200);
   delay(500);
 
-  hostName = getDeviceId();
+  espHostname = getDeviceId();
 
   // Enable saved past credential by autoReconnect option,
   // even once it is disconnected.
   acConfig.autoReconnect = true;
-  acConfig.hostName = "esp32";
-
-  // Unique AP ssid
-  acConfig.apid = hostName;
+  acConfig.hostName = espHostname;
+  acConfig.apid = espHostname; // Unique AP ssid
   
   portal.config(acConfig);
 
-  // server.on("/", rootPage);
   if (portal.begin()) {
-    if (MDNS.begin(hostName.c_str())) {
+    if (MDNS.begin(espHostname.c_str())) {
       MDNS.addService("http", "tcp", 80);
     }
-    
+
     Serial.println("WiFi connected: " + WiFi.localIP().toString());
     Serial.println("Hostname: " + String(WiFi.getHostname()));
-
-    String mqttIp = findMDNS(mqttHostname);
-    Serial.println("MQTT IP: " + mqttIp);
     
-//
-//    mqtt = new EspMQTTClient(
-//      WiFi.SSID().c_str(),       // Wifi ssid 
-//      WiFi.psk().c_str(),        // Wifi password
-//      mqttIp.c_str(),            // MQTT Broker server ip
-//      mqttUsername,              // Username
-//      mqttPassword,              // Password
-//      getDeviceId().c_str()      // Client name that uniquely identify your device
-//    );
+    //mqttIp = findMDNS(mqttHostname);
+    // Serial.println("MQTT IP via mDNS: " + mqttIp);
+   
+    mqtt = new EspMQTTClient(
+      mqttIp.c_str(),     // MQTT Broker server ip
+      mqttPort,           // MQTT Broker server port
+      mqttUsername,       // Username
+      mqttPassword,       // Password
+      espHostname.c_str() // Client name that uniquely identify your device
+    );
 
-    // mqtt->enableMQTTPersistence();
+    mqtt->enableMQTTPersistence();
   }
-
-  // configureWifi();
 
   configureServos();
 }
@@ -140,11 +130,11 @@ void onConnectionEstablished()
 
 void loop()
 {
+  portal.handleClient();
+  
   if (mqtt) {
     mqtt->loop();  
   }
-
-  portal.handleClient();
 
   loopServos();
 }
@@ -195,22 +185,7 @@ void loopServos()
     SERVO_SPEED = MQTT_INPUT.value;
   }
 
-  MQTT_INPUT = MQTT_INPUT_RESET;
-}
-
-void configureWifi()
-{
-//  WiFi.begin(ssid, password);
-//  while (WiFi.status() != WL_CONNECTED) {
-//    delay(500);
-//    Serial.print(".");
-//  }
-//
-//  Serial.println("");
-//  Serial.println("WiFi connected");
-//  Serial.println("IP address: ");
-//  Serial.println(WiFi.localIP());
-//  Serial.println("");
+  MQTT_INPUT = MQTT_INPUT_DEFAULT;
 }
 
 void configureServos()
@@ -250,10 +225,16 @@ String findMDNS(String mDnsHost)
   }
 
   IPAddress serverIp = MDNS.queryHost(mDnsHost);
+  int count = 1;
   while (serverIp.toString() == "0.0.0.0") {
     Serial.println("Trying again to resolve mDNS");
     delay(250);
     serverIp = MDNS.queryHost(mDnsHost);
+
+    if (count++ > 8) {
+      Serial.println("Could not find " + mDnsHost + " on the network");
+      break;
+    }
   }
   
   Serial.print("IP address of server: ");
